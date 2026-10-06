@@ -1,0 +1,88 @@
+{
+  "name": "Unsubscribe Handler",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "unsubscribe",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "e55bbf14-c909-404f-89dd-d402f07e66d6",
+      "name": "Unsubscribe Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "90d2ae66-7d55-4e47-9191-e3179025c992"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const DATA = 'YOUR_PATH/data/files'; // injected by build_workflow.py (no $env needed)\nconst fs = require('fs');\nconst email = String(($json.query && $json.query.email) || '').trim().toLowerCase();\nconst ok = /^[^\\s@,]+@[^\\s@,]+\\.[^\\s@,]+$/.test(email);\nconst page = (m) => `<!doctype html><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><body style=\"font-family:Arial,sans-serif;max-width:520px;margin:15vh auto;padding:0 16px\"><h2>${m}</h2></body>`;\nif (!ok) return [{ json: { html: page('Invalid unsubscribe link.') } }];\n\nconst FILE = DATA + '/suppression.csv';\nfs.mkdirSync(DATA, { recursive: true });\nif (!fs.existsSync(FILE)) fs.writeFileSync(FILE, 'email,reason,added_at\\n');\nconst exists = fs.readFileSync(FILE, 'utf8').split(/\\r?\\n/).some((l) => l.split(',')[0].trim().toLowerCase() === email);\nif (!exists) fs.appendFileSync(FILE, `${email},unsubscribed,${new Date().toISOString()}\\n`);\nreturn [{ json: { html: page('You have been unsubscribed. You will not receive further emails.') } }];\n"
+      },
+      "id": "3df43e3b-029c-5fd4-bc4b-9a15e341b451",
+      "name": "Add To Suppression List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "e35a842a-3008-4ee4-a3ed-86b2f5b6f857",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        480,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Unsubscribe Webhook": {
+      "main": [
+        [
+          {
+            "node": "Add To Suppression List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add To Suppression List": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}

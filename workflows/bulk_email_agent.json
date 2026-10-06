@@ -1,0 +1,858 @@
+{
+  "name": "AI Bulk Email Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "f49f6866-4603-49f8-a357-278e0e03ea48",
+        "formTitle": "AI Bulk Email Agent",
+        "formDescription": "Preview = generate drafts for review (nothing is sent). Send = deliver only rows you marked Approved in the review file.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Mode",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Preview"
+                  },
+                  {
+                    "option": "Send"
+                  }
+                ]
+              },
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Campaign ID",
+              "placeholder": "Leave empty in Preview. REQUIRED in Send (copy from the preview report)."
+            },
+            {
+              "fieldLabel": "Campaign Type",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "excel"
+                  },
+                  {
+                    "option": "product"
+                  },
+                  {
+                    "option": "service"
+                  },
+                  {
+                    "option": "custom"
+                  }
+                ]
+              },
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Campaign Prompt",
+              "fieldType": "textarea",
+              "placeholder": "Optional for 'excel'. Describe the product/service/offer for the others."
+            },
+            {
+              "fieldLabel": "Call To Action",
+              "placeholder": "e.g. a 15-minute discussion"
+            },
+            {
+              "fieldLabel": "Tone",
+              "placeholder": "e.g. credible, direct, warm"
+            },
+            {
+              "fieldLabel": "Batch Size",
+              "fieldType": "number",
+              "placeholder": "1"
+            },
+            {
+              "fieldLabel": "Seconds Between Batches",
+              "fieldType": "number",
+              "placeholder": "60",
+              "defaultValue": "60"
+            },
+            {
+              "fieldLabel": "Dry Run",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Yes (simulate, send nothing)"
+                  },
+                  {
+                    "option": "No (really send)"
+                  }
+                ]
+              },
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Leads File",
+              "fieldType": "file",
+              "multipleFiles": false,
+              "acceptFileTypes": ".xlsx",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {
+          "buttonLabel": "Run",
+          "respondWithOptions": {
+            "values": {
+              "formSubmittedText": "Run started. When it finishes, see data/files/reviews/ (Preview) or data/files/reports/ (Send) in VS Code."
+            }
+          }
+        }
+      },
+      "id": "8b66ad2f-36eb-4309-ab37-b7bd3dcbf400",
+      "name": "Campaign Form",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.1,
+      "position": [
+        -1536,
+        208
+      ],
+      "webhookId": "f49f6866-4603-49f8-a357-278e0e03ea48"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===== EDIT THESE FIVE VALUES =====\nconst SENDER_NAME     = 'Your Name';              // shown as the From name\nconst SENDER_EMAIL    = 'you@gmail.com';             // must equal your SMTP username\nconst REPLY_TO        = 'you@gmail.com';             // a monitored inbox\nconst UNSUBSCRIBE_BASE = ''; // reply-based opt-out is used\nconst MODEL = 'gemini-2.5-flash-lite';         // Gemini model string\n// ==================================\n\nconst item = $input.first();\nconst f = item.json;\n\nconst keys = Object.keys(item.binary || {});\nif (!keys.length) throw new Error('No Excel file was uploaded.');\n\nconst mode = String(f['Mode'] || 'Preview').trim();\nconst rawId = String(f['Campaign ID'] || '').trim();\nif (mode === 'Send' && !rawId) {\n  throw new Error('Send mode needs the Campaign ID printed by the Preview run (it is also in the review file name).');\n}\nconst stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);\nconst campaignId = (rawId || 'camp_' + stamp).replace(/[^A-Za-z0-9_-]/g, '_');\n\nreturn [{\n  json: {\n    mode,\n    campaign_id: campaignId,\n    campaign_type: String(f['Campaign Type'] || 'excel').trim().toLowerCase(),\n    campaign_prompt: String(f['Campaign Prompt'] || '').trim(),\n    call_to_action: String(f['Call To Action'] || '').trim(),\n    tone: String(f['Tone'] || '').trim(),\n    batch_size: Math.max(1, parseInt(f['Batch Size'], 10) || 1),\n    wait_seconds: Math.max(0, parseInt(f['Seconds Between Batches'], 10) || 60),\n    dry_run: String(f['Dry Run'] || 'Yes').toLowerCase().startsWith('yes'),\n    sender_name: SENDER_NAME,\n    sender_email: SENDER_EMAIL,\n    reply_to: REPLY_TO,\n    unsubscribe_base: UNSUBSCRIBE_BASE,\n    model: MODEL,\n  },\n  binary: { data: item.binary[keys[0]] },\n}];\n"
+      },
+      "id": "9c2fa55a-7273-430a-9213-a1351916b88c",
+      "name": "Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1328,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "options": {}
+      },
+      "id": "30c2c902-d1cb-43f7-9d23-55cd344bc1aa",
+      "name": "Read Excel",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        -1104,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Trim, lowercase email, map the documented Excel headers, keep the row number.\nconst cfg = $('Config').first().json;\n\nreturn $input.all().map((it, i) => {\n  // case-insensitive header lookup\n  const map = {};\n  for (const k of Object.keys(it.json)) map[k.trim().toLowerCase()] = it.json[k];\n  const g = (...names) => {\n    for (const n of names) {\n      const v = map[n.toLowerCase()];\n      if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();\n    }\n    return '';\n  };\n\n  const first = g('first_name');\n  const last = g('last_name');\n  const email = g('email').toLowerCase();\n\n  return {\n    json: {\n      row_number: i + 2, // Excel row (row 1 = headers)\n      campaign_id: cfg.campaign_id,\n      first_name: first,\n      last_name: last,\n      full_name: g('full_name') || [first, last].filter(Boolean).join(' '),\n      company_name: g('company_name'),\n      email,\n      observed_gap: g('Observed Gaps/Signal', 'observed_gap'),\n      solution: g('AI/ web Opportunity (Solution)', 'solution'),\n      pitch_angle: g('Pitch Angle', 'pitch_angle'),\n      consent_status: g('consent_status').toLowerCase(),\n      unsubscribe_url:\n        g('unsubscribe_url') ||\n        (email && cfg.unsubscribe_base ? `${cfg.unsubscribe_base}?email=${encodeURIComponent(email)}` : ''),\n      send_status: g('send_status') || 'Pending',\n      notes: g('notes'),\n      // filled by Preview, edited by the operator, consumed by Send\n      subject: g('subject'),\n      preview_text: g('preview_text'),\n      html_body: g('html_body'),\n      text_body: g('text_body'),\n      personalization_used: g('personalization_used'),\n      risk_flags: g('risk_flags'),\n    },\n  };\n});\n"
+      },
+      "id": "a3b762f9-dbd6-4c3a-ae69-b8ca60befcb0",
+      "name": "Normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -880,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "977ca402-c6d8-4086-bc35-ae32d59cc394",
+              "leftValue": "={{ $json.eligible }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "96d4b87e-45ae-40ac-8e3e-511b3700b10a",
+      "name": "Eligible?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -448,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "bf375912-85e9-40e7-8cf5-b1aa1bc42c48",
+              "leftValue": "={{ $('Config').first().json.mode }}",
+              "rightValue": "Preview",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "85b54e99-9e0f-4af8-856e-ebbc79a06ade",
+      "name": "Preview Mode?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const DATA = 'YOUR_PATH/data/files';\nconst fs = require('fs');\nconst cfg = $('Config').first().json;\nconst system = fs.readFileSync(DATA + '/prompts/system_prompt.txt', 'utf8');\n\nconst typeHint = {\n  product: 'Promote only the product described in campaign_prompt.',\n  service: 'Promote only the services described in campaign_prompt.',\n  custom: 'Promote only what campaign_prompt describes.',\n  excel: 'No campaign prompt is required. Build the email from the recipient fields.',\n}[cfg.campaign_type] || 'Build the email from the recipient fields.';\n\nreturn $input.all().map((it) => {\n  const r = it.json;\n  const payload = {\n    campaign_type: cfg.campaign_type,\n    campaign_instruction: typeHint,\n    campaign_prompt: cfg.campaign_prompt || null,\n    desired_call_to_action: cfg.call_to_action || null,\n    tone: cfg.tone || null,\n    sender: { name: cfg.sender_name },\n    unsubscribe_method: 'Reply to this email with UNSUBSCRIBE',\n    recipient: {\n      first_name: r.first_name,\n      last_name: r.last_name,\n      full_name: r.full_name,\n      company_name: r.company_name,\n      observed_gap_or_signal: r.observed_gap,\n      ai_web_opportunity_solution: r.solution,\n      pitch_angle: r.pitch_angle,\n    },\n  };\n  return {\n    json: {\n      ...r,\n      request_body: {\n  systemInstruction: { parts: [{ text: system }] },\n  contents: [{\n    role: 'user',\n    parts: [{\n      text:\n        'Write one concise, factual outreach email. Return only the required JSON object. ' +\n        'Include this opt-out sentence in both html_body and text_body: ' +\n        'Reply to this email with UNSUBSCRIBE to stop future emails. ' +\n        'Do not create or invent an unsubscribe link.\\n\\n' +\n        JSON.stringify(payload, null, 2),\n    }],\n  }],\n  generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 8192 },\n},\n    },\n  };\n});"
+      },
+      "id": "f3fb4c5c-62ba-46c2-afd5-8ac6c5e6ae5e",
+      "name": "Build Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse + validate the model output. Anything doubtful -> \"Needs Review\".\nconst out = [];\nconst claimRe = /\\bguarantee[sd]?\\b|\\b\\d{1,3}(?:\\.\\d+)?\\s?%|\\bcase stud(?:y|ies)\\b|\\btrusted by\\b|\\b(?:clients|customers) (?:like|such as)\\b|\\bROI of\\b/i;\n\n$input.all().forEach((it, i) => {\n  const { request_body, ...row } = $('Build Prompt').itemMatching(i).json;\n  const issues = [];\n  let d = {};\nconst parts = it.json.candidates?.[0]?.content?.parts;\nconst content = Array.isArray(parts)\n  ? parts.filter((x) => typeof x.text === 'string' && !x.thought).map((x) => x.text).join('')\n  : undefined;\nif (it.json.error || typeof content !== 'string' || !content.trim()) {\n  const msg = (it.json.error && (it.json.error.message || JSON.stringify(it.json.error))) ||\n    (it.json.promptFeedback && it.json.promptFeedback.blockReason && 'blocked: ' + it.json.promptFeedback.blockReason) ||\n    (it.json.candidates && it.json.candidates[0] && it.json.candidates[0].finishReason && 'finish: ' + it.json.candidates[0].finishReason) ||\n    'no content returned';\n  issues.push('ai_call_failed: ' + String(msg).slice(0, 200));\n  } else {\n    try {\n      let t = content.trim();\n      t = t.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();\n      const a = t.indexOf('{'), b = t.lastIndexOf('}');\n      d = JSON.parse(t.slice(a, b + 1));\n    } catch (e) {\n      const fr = it.json.candidates?.[0]?.finishReason || '?';\nissues.push('invalid_json_from_ai [finish=' + fr + '; starts: ' + content.slice(0, 80).replace(/\\s+/g, ' ') + ']');\n    }\n  }\n\n  if (!issues.length) {\n    for (const k of ['subject', 'preview_text', 'html_body', 'text_body', 'personalization_used', 'risk_flags']) {\n      if (d[k] === undefined || d[k] === null) issues.push('missing_key:' + k);\n    }\n    const subject = String(d.subject || '');\n    const text = String(d.text_body || '');\n    const words = text.split(/\\s+/).filter(Boolean).length;\n    if (subject.length < 3 || subject.length > 70) issues.push('subject_length:' + subject.length);\n    if (words < 90 || words > 150) issues.push('word_count:' + words);\n    if (!/unsubscribe|opt[- ]?out/i.test(text)) issues.push('missing_unsubscribe_text');\n    if (row.unsubscribe_url && !(String(d.html_body).includes(row.unsubscribe_url) && text.includes(row.unsubscribe_url))) {\n      issues.push('missing_unsubscribe_link');\n    }\n    const m = (subject + ' ' + text).match(claimRe);\n    if (m) issues.push('possible_unsupported_claim:' + m[0]);\n    if (Array.isArray(d.risk_flags)) d.risk_flags.forEach((x) => issues.push('ai_flag:' + x));\n  }\n\n  out.push({\n    json: {\n      ...row,\n      subject: String(d.subject || ''),\n      preview_text: String(d.preview_text || ''),\n      html_body: String(d.html_body || ''),\n      text_body: String(d.text_body || ''),\n      personalization_used: String(d.personalization_used || ''),\n      risk_flags: issues.join('; '),\n      send_status: issues.length ? 'Needs Review' : 'Pending',\n    },\n  });\n});\nreturn out;\n"
+      },
+      "id": "12986830-f6d5-4f9f-8cb2-af96174c1581",
+      "name": "Parse & Validate AI Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Emit review rows for the XLSX node and a local CSV preflight report.\nconst DATA='YOUR_PATH/data/files';\nconst fs=require('fs');\nconst cfg=$('Config').first().json;\nconst cols=['row_number','campaign_id','first_name','last_name','full_name','company_name','email','consent_status','mx_status','spamhaus_status','spam_trap_status','bounce_status','unsubscribe_status','preflight_status','block_reason','unsubscribe_url','send_status','subject','preview_text','text_body','html_body','personalization_used','risk_flags','notes'];\nconst rows=$input.all().map((it)=>{const o={};for(const c of cols)o[c]=it.json[c]??'';return o;});\nconst csvValue=(v)=>'\"'+String(v??'').replace(/\"/g,'\"\"').replace(/\\r?\\n/g,' ' )+'\"';\nconst csv=[cols.map(csvValue).join(','),...rows.map((r)=>cols.map((c)=>csvValue(r[c])).join(','))].join('\\r\\n');\nfs.mkdirSync(DATA+'/reviews',{recursive:true});\nfs.writeFileSync(DATA+'/reviews/'+cfg.campaign_id+'_review.csv','\\uFEFF'+csv,'utf8');\nreturn rows.map((json)=>({json}));"
+      },
+      "id": "0f933db7-9af8-452b-9359-df11d89a1d3d",
+      "name": "Build Review Rows",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "options": {
+          "fileName": "review.xlsx",
+          "sheetName": "Leads"
+        }
+      },
+      "id": "6117d73d-538d-4f70-ab8e-4b6190a3bfb9",
+      "name": "Make Review XLSX",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "=YOUR_PATH/data/files/reviews/{{ $('Config').first().json.campaign_id }}_review.xlsx",
+        "options": {}
+      },
+      "id": "30587d6c-8363-4e01-8f0b-392c99ab3c7e",
+      "name": "Save Review File",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        1104,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const DATA = 'YOUR_PATH/data/files'; // injected by build_workflow.py (no $env needed)\nconst fs = require('fs');\nconst cfg = $('Config').first().json;\nconst rows = $('Build Review Rows').all().map((x) => x.json);\n\nconst skipped = [];\ntry {\n  fs.readFileSync(DATA + '/logs/send_log.jsonl', 'utf8').split(/\\r?\\n/).filter(Boolean).forEach((l) => {\n    try {\n      const o = JSON.parse(l);\n      if (o.run_id === $execution.id && o.status === 'skipped') skipped.push({ row: o.row_number, email: o.email, reason: o.reason });\n    } catch (e) {}\n  });\n} catch (e) {}\n\nconst report = {\n  campaign_id: cfg.campaign_id,\n  mode: 'Preview',\n  generated: rows.length,\n  needs_review: rows.filter((r) => r.send_status === 'Needs Review').length,\n  clean_pending_approval: rows.filter((r) => r.send_status === 'Pending').length,\n  approved: 0,\n  sent: 0,\n  failed: 0,\n  skipped: skipped.length,\n  skipped_details: skipped,\n  review_file: `data/files/reviews/${cfg.campaign_id}_review.xlsx`,\n  next_step: 'Open the review file, edit text if needed, set send_status to Approved, clear risk_flags once fixed, then run the form again with Mode = Send and this campaign_id.',\n};\nfs.mkdirSync(DATA + '/reports', { recursive: true });\nfs.writeFileSync(`${DATA}/reports/${cfg.campaign_id}_preview.json`, JSON.stringify(report, null, 2));\nreturn [{ json: report }];\n"
+      },
+      "id": "14c36078-92e0-408e-a6de-1cdd02ba04e3",
+      "name": "Preview Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1328,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const DATA = 'YOUR_PATH/data/files';\nconst fs = require('fs');\nconst cfg = $('Config').first().json;\nconst safeName = String(cfg.sender_name || '').replace(/[\"\\r\\n]/g, '');\nconst suppressionFile = DATA + '/suppression.csv';\nconst suppressed = new Set();\ntry {\n  fs.readFileSync(suppressionFile, 'utf8').split(/\\r?\\n/).slice(1).forEach((line) => {\n    const email = line.split(',')[0].trim().toLowerCase();\n    if (email) suppressed.add(email);\n  });\n} catch (e) {\n  throw new Error('Suppression list unavailable; fail closed before sending: ' + String(e.message || e));\n}\nconst LOG = DATA + '/logs/send_log.jsonl';\nfs.mkdirSync(DATA + '/logs', { recursive: true });\nconst kept = [];\nfor (const it of $input.all()) {\n  const r = it.json;\n  const email = String(r.email || '').trim().toLowerCase();\n  if (suppressed.has(email)) {\n    fs.appendFileSync(LOG, JSON.stringify({ts:new Date().toISOString(),run_id:$execution.id,campaign_id:cfg.campaign_id,mode:'Send',email,row_number:r.row_number,status:'skipped',reason:'suppressed_unsubscribed_pre_send'}) + '\\n');\n    continue;\n  }\n  if (cfg.mode === 'Send' && r.eligible === true && String(r.send_status || '').trim().toLowerCase() === 'approved') {\n    kept.push({json:{...r,from:'\"'+safeName+'\" <'+cfg.sender_email+'>',reply_to:cfg.reply_to}});\n  }\n}\nreturn kept;"
+      },
+      "id": "2dd7c238-4187-455b-9244-b7003c4ca629",
+      "name": "Prepare Send",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        80,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "15cda159-f781-4744-b38c-f387eddb9f7e",
+              "leftValue": "={{ $('Config').first().json.dry_run }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b2a272a8-924b-4529-a38c-4e699981d52d",
+      "name": "Dry Run?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        224,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const DATA = 'YOUR_PATH/data/files'; // injected by build_workflow.py (no $env needed)\n// Dry run: nothing is sent. Records what WOULD be sent.\nconst fs = require('fs');\nconst cfg = $('Config').first().json;\nfs.mkdirSync(DATA + '/logs', { recursive: true });\nreturn $input.all().map((it) => {\n  const r = it.json;\n  fs.appendFileSync(DATA + '/logs/send_log.jsonl', JSON.stringify({\n    ts: new Date().toISOString(), run_id: $execution.id, campaign_id: cfg.campaign_id, mode: 'Send',\n    email: r.email, row_number: r.row_number, status: 'dry_run', subject: r.subject,\n  }) + '\\n');\n  return { json: { email: r.email, status: 'dry_run' } };\n});\n"
+      },
+      "id": "3aec6439-3919-4ae6-a447-9a0746d9a692",
+      "name": "Dry Run Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": "={{ $('Config').first().json.batch_size }}",
+        "options": {}
+      },
+      "id": "f315d69d-a5c1-47be-a240-04696a5fe924",
+      "name": "Loop Over Items",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        448,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $json.from }}",
+        "toEmail": "={{ $json.email }}",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "both",
+        "text": "={{ $json.text_body }}",
+        "html": "={{ $json.html_body }}",
+        "options": {
+          "appendAttribution": false,
+          "replyTo": "={{ $json.reply_to }}"
+        }
+      },
+      "id": "e22ab4c5-e3c6-4d4e-ad5a-aee2fcaae47b",
+      "name": "Send Email (Gmail SMTP)",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        896,
+        432
+      ],
+      "webhookId": "4b34607e-c5ef-48c9-bcb5-b57c784e2fc3",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "smtp": {
+          "id": "A03wz5OILgooAst8",
+          "name": "SMTP account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const DATA = 'YOUR_PATH/data/files'; // injected by build_workflow.py (no $env needed)\n// Runs right after \"Send Email\". Success items carry messageId; failures carry {error}.\nconst fs = require('fs');\nconst cfg = $('Config').first().json;\nfs.mkdirSync(DATA + '/logs', { recursive: true });\n\nreturn $input.all().map((it, i) => {\n  const j = it.json;\n  let row = {};\n  try { row = $('Loop Over Items').itemMatching(i).json; } catch (e) {}\n  const email = row.email || (j.accepted && j.accepted[0]) || (j.envelope && j.envelope.to && j.envelope.to[0]) || '';\n  const failed = !!j.error || !j.messageId;\n  const rec = {\n    ts: new Date().toISOString(), run_id: $execution.id, campaign_id: cfg.campaign_id, mode: 'Send',\n    email, row_number: row.row_number || null,\n    status: failed ? 'failed' : 'sent',\n    message_id: j.messageId || null,\n    error: failed ? String((j.error && (j.error.message || j.error)) || 'no messageId returned').slice(0, 300) : null,\n    attempt: 1,\n  };\n  fs.appendFileSync(DATA + '/logs/send_log.jsonl', JSON.stringify(rec) + '\\n');\n  return { json: rec };\n});\n"
+      },
+      "id": "305de3b3-1cf3-43ef-912a-52afcfbac23d",
+      "name": "Record Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1104,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "amount": "={{ $('Config').first().json.wait_seconds }}"
+      },
+      "id": "a91353cb-4496-4beb-8098-c196398c1b49",
+      "name": "Wait",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1328,
+        432
+      ],
+      "webhookId": "60f73c7f-520a-43dc-afc2-ad16c3d675b2"
+    },
+    {
+      "parameters": {
+        "jsCode": "const DATA = 'YOUR_PATH/data/files'; // injected by build_workflow.py (no $env needed)\nconst fs = require('fs');\nconst cfg = $('Config').first().json;\nconst latest = {};\nconst skipped = [];\ntry {\n  fs.readFileSync(DATA + '/logs/send_log.jsonl', 'utf8').split(/\\r?\\n/).filter(Boolean).forEach((l) => {\n    try {\n      const o = JSON.parse(l);\n      if (o.run_id !== $execution.id) return;\n      if (o.status === 'skipped') skipped.push({ row: o.row_number, email: o.email, reason: o.reason });\n      else latest[o.email] = o;\n    } catch (e) {}\n  });\n} catch (e) {}\nconst vals = Object.values(latest);\nconst report = {\n  campaign_id: cfg.campaign_id,\n  mode: 'Send',\n  dry_run: cfg.dry_run,\n  sent: vals.filter((v) => v.status === 'sent').length,\n  failed: vals.filter((v) => v.status === 'failed').length,\n  would_send_dry_run: vals.filter((v) => v.status === 'dry_run').length,\n  skipped: skipped.length,\n  skipped_details: skipped,\n  failures: vals.filter((v) => v.status === 'failed').map((v) => ({ email: v.email, error: v.error })),\n};\nfs.mkdirSync(DATA + '/reports', { recursive: true });\nfs.writeFileSync(`${DATA}/reports/${cfg.campaign_id}_send_${$execution.id}.json`, JSON.stringify(report, null, 2));\nreturn [{ json: report }];\n"
+      },
+      "id": "85906eff-213a-4292-a14f-b142bd3a3029",
+      "name": "Send Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1552,
+        304
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "6412b9b2-0916-4c03-a1b8-ebb7619dd6f1",
+      "name": "Skipped (logged)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -224,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const DATA = 'YOUR_PATH/data/files';\nconst fs = require('fs');\nconst cfg = $('Config').first().json;\nconst LOG_DIR = DATA + '/logs';\nconst LOG = LOG_DIR + '/send_log.jsonl';\nfs.mkdirSync(LOG_DIR, {recursive:true});\nlet dns=null; try {dns=require('dns').promises;} catch(e) {}\nlet suppressionReadOk=true; const suppressed=new Set(); const hardBounced=new Set();\ntry {fs.readFileSync(DATA+'/suppression.csv','utf8').split(/\\r?\\n/).slice(1).forEach((line)=>{const f=line.split(',');const email=String(f[0]||'').trim().toLowerCase();const reason=String(f[1]||'').trim().toLowerCase();if(email)suppressed.add(email);if(email&&/hard.?bounce|permanent.?failure/.test(reason))hardBounced.add(email);});} catch(e){suppressionReadOk=false;}\nconst alreadySent=new Set(); const DAILY_CAP=30; const cutoff=Date.now()-86400000; let sentInLast24h=0;\ntry {fs.readFileSync(LOG,'utf8').split(/\\r?\\n/).filter(Boolean).forEach((line)=>{try{const o=JSON.parse(line);const email=String(o.email||'').toLowerCase();if(o.status==='sent'){alreadySent.add(o.campaign_id+'|'+email);if(Date.parse(o.ts)>=cutoff)sentInLast24h++;}if(email&&(o.status==='hard_bounce'||o.status==='bounced'||(o.status==='failed'&&/\\b5\\.\\d\\.\\d\\b|\\b55\\d\\b/.test(String(o.error||'')))))hardBounced.add(email);}catch(e){}});}catch(e){}\nconst input=$input.all(); const domains=[...new Set(input.map(it=>String(it.json.email||'').toLowerCase().split('@')[1]).filter(Boolean))]; const mxByDomain={};\nif(dns) await Promise.all(domains.map(async(domain)=>{try{const mx=await dns.resolveMx(domain);mxByDomain[domain]=Array.isArray(mx)&&mx.length?'pass':'fail_no_mx_records';}catch(e){mxByDomain[domain]=['ENODATA','ENOTFOUND','ENOTIMP'].includes(e.code)?'fail_no_mx_records':'unknown_dns_error';}}));\nconst emailRe=/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;const seen=new Set();const out=[];\nconst base=String(cfg.unsubscribe_base||'');const unsubscribeStatus=/^https:\\/\\//i.test(base)&&!/localhost|127\\.0\\.0\\.1/i.test(base)?'endpoint_only_no_signed_token':'unconfigured_public_https_jwt';\nfor(const it of input){const r=it.json;const email=String(r.email||'').trim().toLowerCase();const domain=email.split('@')[1]||'';const reasons=[];const validEmail=emailRe.test(email);const mxStatus=!validEmail?'not_checked_invalid_email':!dns?'unknown_dns_module_unavailable':(mxByDomain[domain]||'unknown_dns_result');const bounceStatus=hardBounced.has(email)?'hard_bounce':'no_known_hard_bounce';\nif(!validEmail)reasons.push('invalid_email');if(!suppressionReadOk)reasons.push('suppression_list_unavailable');if(!['opted_in','legitimate_interest'].includes(String(r.consent_status||'').toLowerCase()))reasons.push('compliance_block_no_consent');if(validEmail&&suppressed.has(email))reasons.push('suppressed_unsubscribed');if(validEmail){if(seen.has(email))reasons.push('duplicate_email');seen.add(email);}\nconst checkGaps=[];if(mxStatus!=='pass')checkGaps.push('mx_check_'+mxStatus);if(bounceStatus!=='no_known_hard_bounce')checkGaps.push('bounce_status_'+bounceStatus);const warningGaps=[];\nif(cfg.mode==='Send'){if(String(r.send_status||'').toLowerCase()!=='approved')reasons.push('not_approved');if(!r.subject||!r.text_body||!r.html_body)reasons.push('missing_generated_content');if(String(r.risk_flags??'').trim()!=='')reasons.push('unresolved_risk_flags');if(alreadySent.has(r.campaign_id+'|'+email))reasons.push('already_sent_in_campaign');reasons.push(...checkGaps);}\nif(cfg.mode==='Send'&&!reasons.length){if(sentInLast24h>=DAILY_CAP)reasons.push('daily_cap_reached');else sentInLast24h++;}\nconst blocked=reasons.length>0;const allReasons=[...new Set(reasons)];if(blocked)fs.appendFileSync(LOG,JSON.stringify({ts:new Date().toISOString(),run_id:$execution.id,campaign_id:cfg.campaign_id,mode:cfg.mode,email,row_number:r.row_number,status:'skipped',reason:reasons.join(', ')})+'\\n');\nout.push({json:{...r,mx_status:mxStatus,bounce_status:bounceStatus,unsubscribe_status:unsubscribeStatus,preflight_status:blocked?'blocked':(checkGaps.length||warningGaps.length)?'incomplete_checks':'pass',block_reason:allReasons.join(', '),eligible:!blocked}});\n}\nreturn out;"
+      },
+      "id": "39ab78b3-0932-4788-b3ae-2a5a705af650",
+      "name": "Validate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -656,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=   https://generativelanguage.googleapis.com/v1beta/models/{{ $('Config').first().json.model }}:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request_body) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 3,
+              "batchInterval": 1500
+            }
+          },
+          "timeout": 90000
+        }
+      },
+      "id": "eb12d55f-e374-4715-80b5-9f255a9bea97",
+      "name": "Gemini Generate Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ],
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "hIzbjD2XLFDZFPqM",
+          "name": "Header Auth account"
+        },
+        "openAiApi": {
+          "id": "3YFcDoXeby4Kl4lb",
+          "name": "OpenAI account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const DATA='YOUR_PATH/data/files';\nconst fs=require('fs');\nconst cfg=$('Config').first().json;\nconst input=$input.all();\nconst suppressed=new Set();\ntry {fs.readFileSync(DATA+'/suppression.csv','utf8').split(/\\r?\\n/).slice(1).forEach((line)=>{const e=String(line.split(',')[0]||'').trim().toLowerCase();if(e)suppressed.add(e);});} catch(e) {throw new Error('Suppression list unavailable immediately before SMTP send; campaign stopped.');}\nconst hardBounced=new Set();\ntry {fs.readFileSync(DATA+'/logs/send_log.jsonl','utf8').split(/\\r?\\n/).filter(Boolean).forEach((line)=>{try{const o=JSON.parse(line);const e=String(o.email||'').trim().toLowerCase();if(e&&(o.status==='hard_bounce'||o.status==='bounced'||(o.status==='failed'&&/\\b5\\.\\d\\.\\d\\b|\\b55\\d\\b/.test(String(o.error||'')))))hardBounced.add(e);}catch(e){}});} catch(e) {}\nfor(const it of input){const email=String(it.json.email||'').trim().toLowerCase();const reason=suppressed.has(email)?'suppressed_unsubscribed_immediately_before_send':hardBounced.has(email)?'hard_bounce_recorded_immediately_before_send':'';if(reason){fs.appendFileSync(DATA+'/logs/send_log.jsonl',JSON.stringify({ts:new Date().toISOString(),run_id:$execution.id,campaign_id:cfg.campaign_id,mode:'Send',email,row_number:it.json.row_number,status:'skipped',reason})+'\\n');throw new Error(reason+'; campaign stopped before SMTP send.');}}\nreturn input;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        400
+      ],
+      "id": "20494fe9-a955-4f3d-87dd-f32ad94d91b8",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "postProcessAction": "nothing",
+        "options": {
+          "customEmailConfig": "[\"UNSEEN\"]",
+          "trackLastMessageId": true
+        }
+      },
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2.2,
+      "position": [
+        -384,
+        352
+      ],
+      "id": "7522ac19-d4cd-4eb1-af15-ea4712500e1b",
+      "name": "Email Trigger (IMAP)",
+      "credentials": {
+        "imap": {
+          "id": "kgQvRwv19W1Ak4MV",
+          "name": "IMAP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst DATA = 'YOUR_PATH/data/files';\nconst FILE = DATA + '/suppression.csv';\nconst items = $input.all();\nconst rows = [];\nconst seen = new Set();\nfunction collect(value, out, depth = 0) {\n  if (depth > 8 || value == null) return;\n  if (typeof value === 'string') { out.push(value); return; }\n  if (Array.isArray(value)) { for (const v of value) collect(v, out, depth + 1); return; }\n  if (typeof value === 'object') for (const [key, v] of Object.entries(value)) {\n    if (!/attachments|binary/i.test(key)) collect(v, out, depth + 1);\n  }\n}\nfunction addEmails(text, set) {\n  const re = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/ig;\n  let m;\n  while ((m = re.exec(text)) !== null) set.add(m[0].toLowerCase());\n}\nfunction csv(value) { return '\"' + String(value).replace(/\"/g, '\"\"') + '\"'; }\n\nfor (const item of items) {\n  const parts = [];\n  collect(item.json, parts);\n  const message = parts.join('\\n');\n  const hardFailure = /(?:status\\s*[:=]\\s*5\\.[0-9]\\.[0-9]|\\b5\\.[0-9]\\.[0-9]\\b|diagnostic-code[^\\r\\n]*\\b5[0-9]{2}\\b|smtp[^\\r\\n]*\\b5[0-9]{2}\\b)/i.test(message);\n  const failureNotice = /delivery status notification|undeliver|mailer-daemon|mail delivery subsystem|permanent fatal|delivery failed|recipient address rejected/i.test(message);\n  if (!hardFailure || !failureNotice) continue;\n  const recipients = new Set();\n  const lines = message.split(/\\r?\\n/);\n  for (let i = 0; i < lines.length; i++) {\n    if (/^(?:final-recipient|original-recipient|x-failed-recipients|failed recipient|recipient address)\\s*[:=]/i.test(lines[i])) {\n      addEmails(lines[i], recipients);\n    }\n  }\n  const marker = /following addresses had permanent fatal errors:?/i.exec(message);\n  if (marker) {\n    const block = message.slice(marker.index + marker[0].length).split(/\\n\\s*\\n|-----|\\n(?:please|see|the mail system)/i, 1)[0].slice(0, 1200);\n    addEmails(block, recipients);\n  }\n  for (const email of recipients) {\n    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email) || seen.has(email)) continue;\n    seen.add(email);\n    rows.push({ email, reason: 'hard_bounce' });\n  }\n}\nif (rows.length) {\n  if (!fs.existsSync(DATA)) fs.mkdirSync(DATA, { recursive: true });\n  const current = fs.existsSync(FILE) ? fs.readFileSync(FILE, 'utf8') : 'email,reason,added_at\\n';\n  const known = new Set(current.split(/\\r?\\n/).slice(1).map(line => (line.split(',')[0] || '').replace(/^\\\"|\\\"$/g, '').trim().toLowerCase()).filter(Boolean));\n  const now = new Date().toISOString();\n  const additions = rows.filter(row => !known.has(row.email)).map(row => [row.email, row.reason, now].join(',')).join('\\n');\n  if (additions) fs.appendFileSync(FILE, (current && !current.endsWith('\\n') ? '\\n' : '') + additions + '\\n', 'utf8');\n}\nreturn rows.map(row => ({ json: { email: row.email, status: 'hard_bounce_added_to_suppression' } }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -80,
+        304
+      ],
+      "id": "943a62e1-c767-4b4e-a28e-86a9bfc5c559",
+      "name": "Code in JavaScript1"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Campaign Form": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Read Excel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Excel": {
+      "main": [
+        [
+          {
+            "node": "Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize": {
+      "main": [
+        [
+          {
+            "node": "Validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Eligible?": {
+      "main": [
+        [
+          {
+            "node": "Preview Mode?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skipped (logged)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preview Mode?": {
+      "main": [
+        [
+          {
+            "node": "Build Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Prompt": {
+      "main": [
+        [
+          {
+            "node": "Gemini Generate Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Validate AI Output": {
+      "main": [
+        [
+          {
+            "node": "Build Review Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Review Rows": {
+      "main": [
+        [
+          {
+            "node": "Make Review XLSX",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Make Review XLSX": {
+      "main": [
+        [
+          {
+            "node": "Save Review File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Review File": {
+      "main": [
+        [
+          {
+            "node": "Preview Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Send": {
+      "main": [
+        [
+          {
+            "node": "Dry Run?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dry Run?": {
+      "main": [
+        [
+          {
+            "node": "Dry Run Log",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dry Run Log": {
+      "main": [
+        [
+          {
+            "node": "Send Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Send Report",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email (Gmail SMTP)": {
+      "main": [
+        [
+          {
+            "node": "Record Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Result": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate": {
+      "main": [
+        [
+          {
+            "node": "Eligible?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Generate Email": {
+      "main": [
+        [
+          {
+            "node": "Parse & Validate AI Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Send Email (Gmail SMTP)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Trigger (IMAP)": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "ae4723f6-1e92-4607-bc13-c8bae6813577",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ce3b3e3d51ec93ed3e590bcf3376412a64846573a10a192a451e5110ae0afbb1"
+  },
+  "nodeGroups": [],
+  "id": "ggLz6d0qLWZXUfPd",
+  "tags": []
+}

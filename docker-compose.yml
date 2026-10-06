@@ -1,0 +1,24 @@
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: n8n-bulk-email
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - GENERIC_TIMEZONE=Asia/Karachi
+      - TZ=Asia/Karachi
+      # Code nodes read/write the suppression list, logs and prompt via the fs module
+      - NODE_FUNCTION_ALLOW_BUILTIN=fs,path,dns,crypto
+      # Public base URL n8n uses for webhooks / form links (change when you expose n8n)
+      - WEBHOOK_URL=http://localhost:5678/
+      - BULK_EMAIL_DATA_DIR=/files
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      - N8N_RESTRICT_FILE_ACCESS_TO=/files
+    volumes:
+      - n8n_data:/home/node/.n8n
+      # visible in VS Code: prompts, review files, reports, logs, suppression list
+      - ./data/files:/files
+
+volumes:
+  n8n_data:

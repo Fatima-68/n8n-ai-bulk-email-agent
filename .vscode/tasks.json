@@ -1,0 +1,59 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "1a. Start n8n (npm, no Docker)",
+      "type": "shell",
+      "command": "${workspaceFolder}/start-n8n.bat",
+      "windows": {
+        "command": ".\\start-n8n.bat"
+      },
+      "linux": {
+        "command": "./start-n8n.sh"
+      },
+      "osx": {
+        "command": "./start-n8n.sh"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "1b. Start n8n (Docker alternative)",
+      "type": "shell",
+      "command": "docker compose up -d",
+      "problemMatcher": []
+    },
+    {
+      "label": "2. Rebuild workflow JSON",
+      "type": "shell",
+      "command": "python workflows/build_workflow.py",
+      "problemMatcher": []
+    },
+    {
+      "label": "3. Test SMTP",
+      "type": "shell",
+      "command": "python scripts/test_smtp.py",
+      "problemMatcher": []
+    },
+    {
+      "label": "4. Validate leads file",
+      "type": "shell",
+      "command": "python scripts/validate_leads.py ${input:xlsx}",
+      "problemMatcher": []
+    },
+    {
+      "label": "Stop n8n",
+      "type": "shell",
+      "command": "docker compose down",
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "xlsx",
+      "type": "promptString",
+      "description": "Path to leads .xlsx",
+      "default": "sample/leads_sample.xlsx"
+    }
+  ]
+}

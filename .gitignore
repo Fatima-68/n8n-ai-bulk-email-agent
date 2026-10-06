@@ -1,0 +1,7 @@
+.env
+data/files/logs/*
+data/files/reviews/*
+data/files/reports/*
+data/files/suppression.csv
+!data/files/*/.gitkeep
+__pycache__/
